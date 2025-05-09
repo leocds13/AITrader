@@ -1,7 +1,5 @@
 import pandas as pd
 import matplotlib.pyplot as plt
-
-from example_strategy import moving_average_crossover_strategy
 from ai_strategy import AIStrategy
 
 class Backtest:

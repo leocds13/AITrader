@@ -6,6 +6,7 @@ from stable_baselines3.common.env_util import make_vec_env
 import logging
 from sklearn.preprocessing import RobustScaler
 from utils import calculate_sma, calculate_rsi, calculate_macd
+import matplotlib.dates as mdates
 
 # Configurar logging detalhado
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -92,20 +93,30 @@ class TradingEnvironment(gym.Env):
 
         elif action == 3:  # Vender integral (Short Selling)
             if not self.open_position:  # Permitir abrir uma operação de venda se não houver operação aberta
-                self.position -= self.balance / current_price  # Abrir posição vendida integral
-                self.open_position = True
-                self.last_buy_step = self.current_step
-                logging.info(f"Venda integral (short) realizada no preço {current_price:.2f}")
+                if self.balance > 0:
+                    self.position -= self.balance / current_price  # Abrir posição vendida integral
+                    self.open_position = True
+                    self.last_buy_step = self.current_step
+                    logging.info(f"Venda integral (short) realizada no preço {current_price:.2f}")
+                else:
+                    penalty -= 10  # Penalização por tentar vender sem saldo suficiente
+                    # logging.warning("Tentativa de venda integral sem saldo suficiente.")
             else:
                 penalty -= 10  # Penalização por tentar iniciar uma venda sem encerrar a operação anterior
 
-        elif action == 4:  # Vender parcial
-            if self.open_position and self.position > 0:
-                self.balance += (self.position / 2) * current_price  # Venda parcial (50% da posição)
-                self.position /= 2
-                logging.info(f"Venda parcial realizada no preço {current_price:.2f}")
+        elif action == 4:  # Vender parcial (Short Selling)
+            if not self.open_position:  # Permitir abrir uma operação de venda parcial se não houver operação aberta
+                if self.balance > 0:
+                    self.position -= (self.balance / 2) / current_price  # Abrir posição vendida parcial (50% do saldo)
+                    self.balance /= 2
+                    self.open_position = True
+                    self.last_buy_step = self.current_step
+                    logging.info(f"Venda parcial (short) realizada no preço {current_price:.2f}")
+                else:
+                    penalty -= 10  # Penalização por tentar vender sem saldo suficiente
+                    # logging.warning("Tentativa de venda parcial sem saldo suficiente.")
             else:
-                penalty -= 10  # Penalização por tentar vender sem posição ou sem encerrar operação anterior
+                penalty -= 10  # Penalização por tentar iniciar uma venda sem encerrar a operação anterior
 
         elif action == 5:  # Encerrar operação
             if self.open_position:
@@ -116,9 +127,20 @@ class TradingEnvironment(gym.Env):
             else:
                 penalty -= 5  # Penalização por tentar encerrar sem operação aberta
 
-        # Penalização dinâmica baseada no tempo sem lucro
-        if self.open_position and (self.current_step - self.last_buy_step) > 10:
-            penalty -= (self.current_step - self.last_buy_step) * 0.1
+        # Penalização dinâmica baseada no tempo sem lucro ou ação
+        if self.open_position:
+            steps_since_last_action = self.current_step - self.last_buy_step
+            if steps_since_last_action > 10:
+                penalty -= min(steps_since_last_action * 0.1, 10)  # Limitar penalidade máxima a 10
+
+        # Penalização por inatividade geral (sem abrir ou fechar posições por muito tempo)
+        if not self.open_position and self.current_step > 10:
+            penalty -= min((self.current_step - (self.last_buy_step or 0)) * 0.05, 5)  # Penalidade máxima limitada a 5
+
+        # Garantir que operações sejam encerradas antes de iniciar novas
+        if self.open_position and action in [1, 2, 3, 4]:
+            penalty -= 10  # Penalização por tentar iniciar nova operação sem encerrar a anterior
+            # logging.warning("Tentativa de iniciar nova operação sem encerrar a anterior.")
 
         self.net_worth = self.balance + self.position * current_price
 
@@ -159,6 +181,35 @@ def plot_training_results(data, rewards, net_worths):
     plt.tight_layout()
     plt.show()
 
+def plot_operations(data, operations):
+    """Plota os dados históricos junto com as operações realizadas."""
+    plt.figure(figsize=(14, 7))
+
+    # Converter timestamps para formato de data
+    data['timestamp'] = pd.to_datetime(data['timestamp'])
+
+    # Plotar os preços de fechamento
+    plt.plot(data['timestamp'], data['close'], label='Preço de Fechamento', color='blue')
+
+    # Adicionar operações ao gráfico
+    for op in operations:
+        step, action, price = op
+        if action == 'buy':
+            plt.scatter(data['timestamp'].iloc[step], price, color='green', label='Compra', marker='^')
+        elif action == 'sell':
+            plt.scatter(data['timestamp'].iloc[step], price, color='red', label='Venda', marker='v')
+
+    # Formatação do gráfico
+    plt.title('Dados Históricos e Operações Realizadas')
+    plt.xlabel('Data')
+    plt.ylabel('Preço de Fechamento')
+    plt.legend()
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    plt.gca().xaxis.set_major_locator(mdates.MonthLocator())
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
 def train_rl_agent_with_logging(env, model_path='rl_agent.zip'):
     """Treina um agente de RL usando DQN e registra recompensas e ações."""
     model = DQN('MlpPolicy', env, verbose=1, learning_rate=0.0001, buffer_size=50000, learning_starts=1000, batch_size=32, gamma=0.99, train_freq=4, target_update_interval=1000)
@@ -196,6 +247,7 @@ def test_rl_agent(env, model_path='rl_agent.zip'):
     obs = env.reset()
     rewards = []
     net_worths = []
+    operations = []  # Para armazenar as operações realizadas
     done = False
     while not done:
         action, _states = model.predict(obs, deterministic=True)
@@ -203,8 +255,15 @@ def test_rl_agent(env, model_path='rl_agent.zip'):
         rewards.append(reward)
         net_worths.append(env.net_worth)
 
+        # Registrar operações
+        if action == 1 or action == 2:  # Compra
+            operations.append((env.current_step, 'buy', env.data.iloc[env.current_step]['close']))
+        elif action == 3 or action == 4:  # Venda
+            operations.append((env.current_step, 'sell', env.data.iloc[env.current_step]['close']))
+
     # Plotar os resultados
     plot_training_results(env.data, rewards, net_worths)
+    plot_operations(env.data, operations)
 
 if __name__ == "__main__":
     import pandas as pd
@@ -219,4 +278,4 @@ if __name__ == "__main__":
     model = train_rl_agent_with_logging(env)
 
     # Testar o agente
-    test_rl_agent(env)
+    # test_rl_agent(env)
