@@ -1,0 +1,18 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+ccxt = "*"
+pandas = "*"
+matplotlib = "*"
+scikit-learn = "*"
+gym = "*"
+stable-baselines3 = "*"
+shimmy = ">=2.0"
+
+[dev-packages]
+
+[requires]
+python_version = "3.11"
