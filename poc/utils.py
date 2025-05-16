@@ -14,7 +14,7 @@ def calculate_rsi(data, window):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
-def calculate_macd(data, fastperiod, slowperiod, signalperiod):
+def calculate_macd(data, fastperiod=12, slowperiod=26, signalperiod=9):
     """Calcula o MACD e a linha de sinal."""
     ema_fast = data['close'].ewm(span=fastperiod, adjust=False).mean()
     ema_slow = data['close'].ewm(span=slowperiod, adjust=False).mean()

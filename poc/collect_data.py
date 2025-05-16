@@ -3,7 +3,7 @@ import pandas as pd
 
 def collect_historical_data(symbol, timeframe, since):
     exchange = ccxt.binance() 
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since)
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=since, limit=1000)
     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     return df
